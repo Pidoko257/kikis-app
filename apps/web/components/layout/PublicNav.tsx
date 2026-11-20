@@ -18,6 +18,7 @@ export function PublicNav() {
 
   return (
     <nav
+      aria-label="Primary"
       className={cn(
         'fixed top-0 inset-x-0 z-50 transition-all duration-200',
         scrolled
