@@ -43,6 +43,11 @@ export interface SessionWriters {
  * therefore rejected the whole statement — including the status change — once
  * the last voucher had already landed, leaving the session `open` and invisible
  * to the reconciler.
+ *
+ * The session row insert is tracked per channel so a voucher write that races
+ * ahead of a slow insert waits for it to land before issuing its guarded
+ * UPDATE. Without this ordering the first voucher's UPDATE could match zero
+ * rows (the row did not exist yet) and silently drop the amount and signature.
  */
 export function createSessionWriters(
   supabase: SupabaseClient | null,
@@ -50,24 +55,54 @@ export function createSessionWriters(
 ): SessionWriters {
   const { payee, network, channelContract, providerUrl } = config
 
+  // Tracks the in-flight (or settled) session insert per channel so voucher
+  // writes can be ordered after row creation.
+  const sessionInserts = new Map<string, Promise<void>>()
+
   return {
     onSessionOpen: async (channelId, payer) => {
       if (!supabase) return
-      const { error } = await supabase.from('sessions').insert({
-        channel_id: channelId,
-        payee,
-        payer: payer ?? 'unknown',
-        cumulative_amount: '0',
-        status: 'open',
-        channel_contract: channelId,
-        network,
-        voucher_count: 0,
-      })
-      if (error) console.error('[supabase] session insert failed:', error.message)
+      const insert = (async () => {
+        const { error } = await supabase.from('sessions').insert({
+          channel_id: channelId,
+          payee,
+          payer: payer ?? 'unknown',
+          cumulative_amount: '0',
+          status: 'open',
+          channel_contract: channelId,
+          network,
+          voucher_count: 0,
+        })
+        if (error) {
+          console.error('[supabase] session insert failed:', error.message)
+          throw new Error(`[supabase] session insert failed: ${error.message}`)
+        }
+      })()
+      sessionInserts.set(channelId, insert)
+      // Surface the failure to the caller (and onCallbackError) while keeping
+      // the stored promise so voucher writes can observe it too.
+      await insert
     },
 
     onVoucher: async (channelId, voucherIndex, cumulativeAmount, signature) => {
       if (!supabase) return
+
+      // Order the first (and any racing) voucher write after the session row
+      // exists. A failed insert is observable here rather than silently
+      // dropping the voucher.
+      const pendingInsert = sessionInserts.get(channelId)
+      if (pendingInsert) {
+        try {
+          await pendingInsert
+        } catch (err) {
+          console.error('[supabase] voucher update skipped: session insert failed', {
+            channelId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          throw err
+        }
+      }
+
       const { error } = await supabase
         .from('sessions')
         .update({
@@ -77,7 +112,10 @@ export function createSessionWriters(
         })
         .eq('channel_id', channelId)
         .lt('cumulative_amount', cumulativeAmount)
-      if (error) console.error('[supabase] voucher update failed:', error.message)
+      if (error) {
+        console.error('[supabase] voucher update failed:', error.message)
+        throw new Error(`[supabase] voucher update failed: ${error.message}`)
+      }
     },
 
     onOrphaned: async (channelId, info) => {
