@@ -203,7 +203,8 @@ const client = new KikisAppClient({
   commitmentSecret: commitmentKey
 })
 
-const result = await client.pay(url, { preferredMode: 'x402' })
+// The SDK option is `forceMode` (ModeSelectOptions.forceMode), not `preferredMode`.
+const result = await client.pay(url, { forceMode: 'x402' })
 // Handle errors, parse results, manage state...
 ```
 
