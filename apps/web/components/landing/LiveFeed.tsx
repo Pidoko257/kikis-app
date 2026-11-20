@@ -20,13 +20,21 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
   const [feedFailed, setFeedFailed] = useState(false)
 
   useEffect(() => {
+    let mounted = true
+    // Monotonic sequence so only the latest applicable poll can update state.
+    let latestRequest = 0
+
     async function poll() {
+      const requestId = ++latestRequest
       const supabase = getSupabaseBrowserClient()
       const { data, error } = await supabase
         .from('tx_log')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(5)
+
+      // Ignore results from unmounted components or superseded polls.
+      if (!mounted || requestId !== latestRequest) return
 
       if (error) {
         // Keep the rows already on screen and flag the feed as unavailable.
@@ -40,7 +48,10 @@ export function LiveFeed({ initialEntries = [] }: LiveFeedProps) {
 
     void poll()
     const interval = setInterval(() => void poll(), 10_000)
-    return () => clearInterval(interval)
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
   }, [])
 
   if (entries.length === 0) {
