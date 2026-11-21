@@ -414,5 +414,5 @@ MIT
 <!-- handsoff-issue-64 -->
 - #64: [Contracts] Implement Contract View Function for Current Daily Spend and Remaining Allowance
 
-<!-- handsoff-issue-247 -->
-- #247: [MPP Session] Preserve Exact Stroops in Session Totals and Provider Callbacks
+<!-- handsoff-issue-233 -->
+- #233: [MPP Session] Enforce the Soroban Finality Deadline During an RPC Request
