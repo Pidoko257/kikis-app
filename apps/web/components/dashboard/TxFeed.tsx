@@ -39,6 +39,12 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
       ? initialEntries[initialEntries.length - 1].created_at
       : null,
   )
+  // Track the oldest row we have loaded (for pagination), separate from display.
+  const oldestLoadedRef = useRef<string | null>(
+    initialEntries.length > 0
+      ? initialEntries[initialEntries.length - 1].created_at
+      : null,
+  )
 
   useEffect(() => {
     if (!configured) return
@@ -75,7 +81,20 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
     async function refresh() {
       const rows = await fetchLatest()
       if (disposed || rows === null) return
-      setEntries((prev) => mergeTxEntries(prev, rows, MAX_ENTRIES))
+      setEntries((prev) => {
+        // Merge new rows with current entries, but preserve any older rows beyond MAX_ENTRIES
+        // that were loaded via pagination.
+        const merged = mergeTxEntries(prev, rows, MAX_ENTRIES)
+        // Restore any older rows that were sliced away if they're older than MAX_ENTRIES
+        const oldest = oldestLoadedRef.current
+        if (oldest && prev.length > MAX_ENTRIES) {
+          const olderRows = prev.filter((e) => e.created_at < oldest)
+          if (olderRows.length > 0) {
+            return [...merged, ...olderRows]
+          }
+        }
+        return merged
+      })
     }
 
     // Only one fallback interval at a time. When the realtime socket is live we
@@ -152,6 +171,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
     const rows = (data ?? []) as TxLogEntry[]
     if (rows.length > 0) {
       cursorRef.current = rows[rows.length - 1].created_at
+      oldestLoadedRef.current = rows[rows.length - 1].created_at
     }
     setHasMore(rows.length === PAGE_SIZE)
     setEntries((prev) => {
