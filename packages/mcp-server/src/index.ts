@@ -31,8 +31,22 @@ import {
 // Load environment variables (supports .env files for external secret management)
 const envPath = process.env.KIKIS_APP_ENV_FILE
 if (envPath) {
-  loadDotenv({ path: envPath })
+  // An explicitly configured env file must load successfully. If it fails we
+  // report a distinct, actionable startup error (without printing any values)
+  // so operators don't silently fall back to inherited environment values.
+  const result = loadDotenv({ path: envPath })
+  if (result.error) {
+    const reason = result.error instanceof Error ? result.error.message : String(result.error)
+    console.error(
+      `Error: Failed to load environment file from KIKIS_APP_ENV_FILE (${envPath}): ${reason}`
+    )
+    console.error(
+      'Check that the path exists, is readable, and contains valid KEY=VALUE entries, or unset KIKIS_APP_ENV_FILE to use the default optional .env behavior.'
+    )
+    process.exit(1)
+  }
 } else {
+  // Default .env is optional; a missing file is not an error.
   loadDotenv()
 }
 

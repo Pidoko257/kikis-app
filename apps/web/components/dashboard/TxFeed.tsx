@@ -33,6 +33,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
   const [entries, setEntries] = useState<TxLogEntry[]>(initialEntries)
   const [paused, setPaused] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(initialEntries.length >= PAGE_SIZE)
   const cursorRef = useRef<string | null>(
     initialEntries.length > 0
@@ -135,6 +136,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
     if (loadingMore || !hasMore || cursor === null) return
 
     setLoadingMore(true)
+    setLoadMoreError(null)
     const supabase = getSupabaseBrowserClient()
     const { data, error } = await supabase
       .from('tx_log')
@@ -145,6 +147,8 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
 
     if (error) {
       console.warn('[tx-feed] failed to load more tx_log:', error.message)
+      // Keep the cursor and existing rows intact so the user can retry.
+      setLoadMoreError('Could not load more transactions. Please try again.')
       setLoadingMore(false)
       return
     }
@@ -159,6 +163,7 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
       const appended = rows.filter((r) => !seen.has(r.id))
       return appended.length > 0 ? [...prev, ...appended] : prev
     })
+    setLoadMoreError(null)
     setLoadingMore(false)
   }
 
@@ -214,22 +219,13 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-[var(--text-secondary)]">
-                        {TX_TYPE_LABEL[entry.tx_type]}
-                        {entry.amount != null && (
-                          <span className="ml-1 font-mono text-[var(--text-primary)]">
-                            ${Number(entry.amount).toFixed(4)}
-                          </span>
-                        )}
+                        {TX_TYPE_LABEL[entry.tx_type] ?? entry.tx_type}
                       </span>
-                      <span className="text-xs text-[var(--text-muted)] shrink-0">
-                        <RelativeTime date={entry.created_at} />
-                      </span>
+                      <RelativeTime value={entry.created_at} className="text-xs text-[var(--text-muted)] shrink-0" />
                     </div>
-                    {entry.tx_hash && (
-                      <div className="mt-0.5">
-                        <TxHashLink hash={entry.tx_hash} network={entry.network} />
-                      </div>
-                    )}
+                    <div className="mt-1 flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                      <TxHashLink hash={entry.tx_hash} />
+                    </div>
                   </div>
                 </motion.li>
               ))}
@@ -238,20 +234,23 @@ export function TxFeed({ initialEntries = [] }: TxFeedProps) {
         )}
       </div>
 
-      <div className="px-5 py-3 border-t border-[var(--border-default)] shrink-0 text-center">
-        {hasMore ? (
+      {configured && hasMore && (
+        <div className="px-5 py-3 border-t border-[var(--border-default)] shrink-0">
+          {loadMoreError && (
+            <p role="alert" className="mb-2 text-xs text-[var(--status-error)]">
+              {loadMoreError}
+            </p>
+          )}
           <button
             type="button"
             onClick={() => void loadMore()}
             disabled={loadingMore}
-            className="text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full rounded-lg border border-[var(--border-default)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] disabled:opacity-50"
           >
-            {loadingMore ? 'Loading…' : 'Load More'}
+            {loadingMore ? 'Loading…' : loadMoreError ? 'Retry' : 'Load More'}
           </button>
-        ) : (
-          <span className="text-xs text-[var(--text-muted)]">End of feed</span>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   )
 }

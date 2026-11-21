@@ -1,52 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useKikisApp } from './context.js'
-import type { PaymentOptions, PaymentResult } from '../types.js'
+import type { PaymentOptions, PaymentResult } from '../types'
+import { pay as payCore } from '../pay'
 
-export interface UsePayState {
+export interface UsePayReturn {
   loading: boolean
   result: PaymentResult | null
   error: Error | null
-  pay: (options?: PaymentOptions) => Promise<PaymentResult | null>
+  pay: (overrideOptions?: PaymentOptions) => Promise<PaymentResult | null>
   reset: () => void
 }
 
-function shallowEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
-    return false
-  }
-  const aKeys = Object.keys(a as Record<string, unknown>)
-  const bKeys = Object.keys(b as Record<string, unknown>)
-  if (aKeys.length !== bKeys.length) return false
-  for (const key of aKeys) {
-    if ((a as Record<string, unknown>)[key] !== (b as Record<string, unknown>)[key]) {
-      return false
-    }
-  }
-  return true
-}
-
-export function usePay(url: string, options?: PaymentOptions): UsePayState {
-  const client = useKikisApp()
+export function usePay(options: PaymentOptions): UsePayReturn {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<PaymentResult | null>(null)
   const [error, setError] = useState<Error | null>(null)
 
   const inFlightRef = useRef(false)
-  const mountedRef = useRef(true)
   const abortRef = useRef<AbortController | null>(null)
-  const optionsRef = useRef<PaymentOptions | undefined>(options)
-
-  if (!shallowEqual(optionsRef.current, options)) {
-    optionsRef.current = options
-  }
+  const mountedRef = useRef(true)
 
   useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      abortRef.current?.abort()
-      abortRef.current = null
+      if (abortRef.current) {
+        abortRef.current.abort()
+        abortRef.current = null
+      }
     }
   }, [])
 
@@ -64,19 +44,24 @@ export function usePay(url: string, options?: PaymentOptions): UsePayState {
       }
 
       try {
-        const mergedOptions = overrideOptions ?? optionsRef.current
-        const res = await client.pay(url, {
-          ...mergedOptions,
+        const paymentResult = await payCore({
+          ...options,
+          ...overrideOptions,
           signal: controller.signal,
         })
-        if (mountedRef.current && !controller.signal.aborted) {
-          setResult(res)
+
+        if (mountedRef.current) {
+          setResult(paymentResult)
         }
-        return res
+
+        return paymentResult
       } catch (err) {
-        if (mountedRef.current && !controller.signal.aborted) {
-          setError(err instanceof Error ? err : new Error(String(err)))
+        const normalized = err instanceof Error ? err : new Error(String(err))
+
+        if (mountedRef.current) {
+          setError(normalized)
         }
+
         return null
       } finally {
         inFlightRef.current = false
@@ -88,13 +73,18 @@ export function usePay(url: string, options?: PaymentOptions): UsePayState {
         }
       }
     },
-    [client, url],
+    [options],
   )
 
   const reset = useCallback(() => {
     setResult(null)
     setError(null)
-    setLoading(false)
+    // Keep loading true while a request is still in flight so consumers do not
+    // present an enabled action that would silently no-op. The active request
+    // clears loading in its own finally block on completion.
+    if (!inFlightRef.current) {
+      setLoading(false)
+    }
   }, [])
 
   return { loading, result, error, pay, reset }

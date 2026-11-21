@@ -30,6 +30,10 @@ export function useTxLog(filter?: UseTxLogFilter): TxLogRow[] {
   const [rows, setRows] = useState<TxLogRow[]>([])
 
   useEffect(() => {
+    // Rows belong to the current client + filter identity. Clear them as soon
+    // as that identity changes so stale rows never render while the next
+    // snapshot is pending (or if it fails / the client is removed).
+    setRows([])
     if (!supabase) return
     let cancelled = false
 
@@ -41,8 +45,14 @@ export function useTxLog(filter?: UseTxLogFilter): TxLogRow[] {
         .limit(filter?.limit ?? 100)
       if (filter?.channelId) query = query.eq('channel_id', filter.channelId)
       if (filter?.mode) query = query.eq('mode', filter.mode)
-      const { data } = await query
-      if (!cancelled && data) setRows(data as TxLogRow[])
+      const { data, error } = await query
+      if (cancelled) return
+      if (error) {
+        // A failed read must not expose rows from the prior selection.
+        setRows([])
+        return
+      }
+      if (data) setRows(data as TxLogRow[])
     }
     fetchInitial()
 
@@ -52,6 +62,7 @@ export function useTxLog(filter?: UseTxLogFilter): TxLogRow[] {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'tx_log' },
         (payload: { new: TxLogRow }) => {
+          if (cancelled) return
           const row = payload.new
           if (filter?.channelId && row.channel_id !== filter.channelId) return
           if (filter?.mode && row.mode !== filter.mode) return
