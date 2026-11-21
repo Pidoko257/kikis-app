@@ -37,6 +37,10 @@ export function createSessionWriters(
 ): SessionWriters {
   const { network, channelContract, providerUrl } = config
 
+  // Tracks the in-flight (or settled) session insert per channel so voucher
+  // writes can be ordered after row creation.
+  const sessionInserts = new Map<string, Promise<void>>()
+
   return {
     onSessionOpen: async (channelId, payer) => {
       if (!supabase) return
@@ -54,6 +58,23 @@ export function createSessionWriters(
 
     onVoucher: async (channelId, voucherCount, cumulativeAmount, lastSignature) => {
       if (!supabase) return
+
+      // Order the first (and any racing) voucher write after the session row
+      // exists. A failed insert is observable here rather than silently
+      // dropping the voucher.
+      const pendingInsert = sessionInserts.get(channelId)
+      if (pendingInsert) {
+        try {
+          await pendingInsert
+        } catch (err) {
+          console.error('[supabase] voucher update skipped: session insert failed', {
+            channelId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          throw err
+        }
+      }
+
       const { error } = await supabase
         .from('sessions')
         .update({
@@ -63,7 +84,10 @@ export function createSessionWriters(
         })
         .eq('channel_id', channelId)
         .lt('cumulative_amount', cumulativeAmount)
-      if (error) console.error('[supabase] voucher update failed:', error.message)
+      if (error) {
+        console.error('[supabase] voucher update failed:', error.message)
+        throw new Error(`[supabase] voucher update failed: ${error.message}`)
+      }
     },
 
     onOrphaned: async (channelId, state) => {
