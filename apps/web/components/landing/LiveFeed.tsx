@@ -21,6 +21,7 @@ export function LiveFeed({ initialEntries }: LiveFeedProps) {
     let cancelled = false
 
     async function poll() {
+      const requestId = ++latestRequest
       const supabase = getSupabaseBrowserClient()
       const { data, error } = await supabase
         .from('tx_log')
