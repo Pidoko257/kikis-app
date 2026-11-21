@@ -6,9 +6,24 @@ export interface OnChainProviderInfo {
   tags: string[]
 }
 
+function decodeBase64Utf8(value: string): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(value, 'base64').toString('utf-8')
+  }
+  // atob yields a binary string; reinterpret the bytes as UTF-8 so the
+  // browser path matches the Buffer path for non-ASCII content.
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return new TextDecoder('utf-8').decode(bytes)
+}
+
 function tryDecodeBase64(value: string): string {
   try {
-    return Buffer.from(value, 'base64').toString('utf-8')
+    const decoded = decodeBase64Utf8(value)
+    if (decoded.length > 0 && decoded !== value) return decoded
   } catch {
     return value
   }
